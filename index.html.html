@@ -1,0 +1,450 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>RadioMic Remote | Suite Radiológica</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    
+    <script src="https://www.gstatic.com/firebasejs/9.6.1/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.6.1/firebase-database-compat.js"></script>
+
+    <style>
+        /* Estilos personalizados para scrollbars y efectos */
+        body { background-color: #0f172a; color: #e2e8f0; font-family: 'Segoe UI', system-ui, sans-serif; }
+        .recording-pulse { animation: pulse-red 2s infinite; }
+        @keyframes pulse-red {
+            0% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.7); }
+            70% { box-shadow: 0 0 0 20px rgba(239, 68, 68, 0); }
+            100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); }
+        }
+        .section-active { border-left: 4px solid #38bdf8; background-color: #1e293b; }
+        .section-default { color: #64748b; font-style: italic; } /* Texto normalidad */
+        .section-edited { color: #f8fafc; font-style: normal; font-weight: 500; } /* Texto patológico/editado */
+    </style>
+</head>
+<body class="h-screen w-screen overflow-hidden flex flex-col">
+
+    <div id="view-selection" class="flex-1 flex flex-col items-center justify-center space-y-8 p-4">
+        <h1 class="text-4xl font-bold text-sky-400 tracking-tight"><i class="fa-solid fa-radiation mb-2"></i> RadioMic Remote</h1>
+        <p class="text-slate-400 text-center max-w-md">Sistema de dictado distribuido. Usa tu smartphone como micrófono para tu estación de trabajo.</p>
+        
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-6 w-full max-w-2xl">
+            <button onclick="app.startPCMode()" class="group p-8 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-2xl transition-all shadow-lg hover:shadow-sky-500/20 text-center">
+                <i class="fa-solid fa-desktop text-5xl text-sky-500 mb-4 group-hover:scale-110 transition-transform"></i>
+                <h2 class="text-2xl font-bold text-white">Soy la PANTALLA</h2>
+                <p class="text-sm text-slate-400 mt-2">PC del Hospital / Estación de informes</p>
+            </button>
+
+            <button onclick="app.startMobileMode()" class="group p-8 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-2xl transition-all shadow-lg hover:shadow-rose-500/20 text-center">
+                <i class="fa-solid fa-microphone-lines text-5xl text-rose-500 mb-4 group-hover:scale-110 transition-transform"></i>
+                <h2 class="text-2xl font-bold text-white">Soy el MICRÓFONO</h2>
+                <p class="text-sm text-slate-400 mt-2">Smartphone / Dispositivo móvil</p>
+            </button>
+        </div>
+        <div class="mt-4 p-2 bg-yellow-900/30 border border-yellow-700/50 rounded text-yellow-500 text-xs">
+            <i class="fa-solid fa-triangle-exclamation"></i> Si no has configurado Firebase, el sistema usará <b>Mock Mode</b> (Local Storage) para pruebas en el mismo navegador.
+        </div>
+    </div>
+
+    <div id="view-pc" class="hidden h-full flex flex-col">
+        <header class="h-16 bg-slate-900 border-b border-slate-800 flex items-center justify-between px-6 shadow-md z-10">
+            <div class="flex items-center gap-4">
+                <span class="text-xl font-bold text-sky-500">RadioMic <span class="text-slate-500 text-sm">Viewer</span></span>
+                <div class="px-3 py-1 bg-slate-800 rounded-full border border-slate-700 flex items-center gap-2">
+                    <span class="w-2 h-2 rounded-full bg-green-500 animate-pulse"></span>
+                    <span class="text-xs text-slate-300">ID SESIÓN: <b id="session-id-display" class="text-white text-lg tracking-widest">----</b></span>
+                </div>
+            </div>
+            <div class="flex gap-3">
+                <button onclick="pc.copyReport()" class="px-4 py-2 bg-sky-600 hover:bg-sky-500 text-white rounded shadow text-sm font-medium transition-colors">
+                    <i class="fa-solid fa-copy mr-2"></i> Copiar Informe
+                </button>
+            </div>
+        </header>
+
+        <div class="flex-1 flex overflow-hidden">
+            <aside class="w-64 bg-slate-900 border-r border-slate-800 flex flex-col">
+                <div class="p-4 border-b border-slate-800">
+                    <h3 class="text-xs font-bold text-slate-500 uppercase mb-3">Opciones del Paciente</h3>
+                    <div id="options-container" class="space-y-2">
+                        </div>
+                </div>
+                <div class="p-4 flex-1 overflow-y-auto">
+                    <h3 class="text-xs font-bold text-slate-500 uppercase mb-3">Estructura</h3>
+                    <div id="sections-nav" class="space-y-1">
+                        </div>
+                </div>
+            </aside>
+
+            <main class="flex-1 overflow-y-auto p-8 bg-slate-950">
+                <div id="report-container" class="max-w-4xl mx-auto space-y-6">
+                    </div>
+            </main>
+        </div>
+    </div>
+
+    <div id="view-mobile" class="hidden h-full flex flex-col bg-black">
+        <header class="p-4 flex justify-between items-center border-b border-slate-800">
+            <span class="text-sky-500 font-bold"><i class="fa-solid fa-wifi"></i> Conectado</span>
+            <span id="mobile-session-display" class="text-slate-400 font-mono">ID: ----</span>
+        </header>
+
+        <div class="flex-1 p-6 flex flex-col items-center justify-center text-center space-y-4">
+            <div id="mic-status" class="text-slate-500 text-sm uppercase tracking-wide font-bold">Listo para grabar</div>
+            <div id="live-transcript" class="text-xl text-white font-medium min-h-[3rem] opacity-80 italic">
+                ...
+            </div>
+        </div>
+
+        <div class="flex justify-center pb-8">
+            <button id="btn-record" class="w-32 h-32 rounded-full bg-slate-800 border-4 border-slate-700 text-white text-4xl shadow-2xl transition-all flex items-center justify-center focus:outline-none touch-manipulation">
+                <i class="fa-solid fa-microphone"></i>
+            </button>
+        </div>
+
+        <div class="grid grid-cols-3 gap-1 bg-slate-900 p-1 pb-safe">
+            <button onclick="mobile.sendCommand('next')" class="p-6 bg-slate-800 active:bg-slate-700 text-white flex flex-col items-center gap-2">
+                <i class="fa-solid fa-arrow-down"></i> <span class="text-xs">Siguiente</span>
+            </button>
+            <button onclick="mobile.sendCommand('undo')" class="p-6 bg-slate-800 active:bg-slate-700 text-white flex flex-col items-center gap-2">
+                <i class="fa-solid fa-rotate-left"></i> <span class="text-xs">Borrar Últ.</span>
+            </button>
+            <button onclick="mobile.sendCommand('normal')" class="p-6 bg-slate-800 active:bg-slate-700 text-white flex flex-col items-center gap-2">
+                <i class="fa-solid fa-check"></i> <span class="text-xs">Normal</span>
+            </button>
+        </div>
+    </div>
+
+    <script>
+        // ==========================================
+        // 1. CONFIGURACIÓN & ESTADO
+        // ==========================================
+        
+        // TODO: PEGA TUS CLAVES DE FIREBASE AQUÍ
+        // Si dejas esto vacío, el sistema usará automáticamente el "Mock Mode"
+        const firebaseConfig = {
+            apiKey: "", 
+            authDomain: "",
+            databaseURL: "", // Ejemplo: "https://tu-proyecto.firebaseio.com"
+            projectId: "",
+            storageBucket: "",
+            messagingSenderId: "",
+            appId: ""
+        };
+
+        // Plantilla de Ejemplo (Ultrasonido Abdominal)
+        const TEMPLATE_ABDOMEN = {
+            id: "abdomen_01",
+            title: "Ecografía Abdominal Completa",
+            options: [
+                { id: "opt_tirads", label: "Incluir Tabla TI-RADS", active: false },
+                { id: "opt_legal", label: "Nota Legal de Limitaciones", active: true },
+                { id: "opt_tech", label: "Detallar Transductor (Técnica)", active: false }
+            ],
+            sections: [
+                { id: "higado", title: "Hígado", default: "De morfología y tamaño conservado. Parénquima homogéneo de ecogenicidad habitual. No se observan lesiones focales.", current: "" },
+                { id: "vesicula", title: "Vesícula Biliar", default: "De paredes finas. Contenido anecoico (líquido). No se observan litiasis ni barro biliar.", current: "" },
+                { id: "vias_biliares", title: "Vías Biliares", default: "Vía biliar intra y extrahepática de calibre conservado.", current: "" },
+                { id: "pancreas", title: "Páncreas", default: "Visualización parcial por interposición gaseosa, cabeza y cuerpo de aspecto conservado.", current: "" },
+                { id: "rinones", title: "Riñones", default: "Ambos riñones de situación, tamaño y morfología normal. Relación cortico-medular conservada. Sin signos de urostasis.", current: "" },
+                { id: "conclusiones", title: "Conclusión", default: "Estudio ecográfico sin alteraciones significativas actuales.", current: "" }
+            ]
+        };
+
+        // Estado Global
+        const state = {
+            mode: null, // 'pc' or 'mobile'
+            sessionId: null,
+            isMock: false,
+            recognition: null,
+            isRecording: false,
+            currentSectionIndex: 0
+        };
+
+        // ==========================================
+        // 2. INICIALIZACIÓN DEL SISTEMA
+        // ==========================================
+        
+        const app = {
+            init: () => {
+                // Verificar si hay config de Firebase
+                if (!firebaseConfig.apiKey) {
+                    console.warn("⚠️ No se detectó Firebase Config. Activando MOCK MODE (Local Storage).");
+                    state.isMock = true;
+                } else {
+                    try {
+                        firebase.initializeApp(firebaseConfig);
+                    } catch (e) {
+                        console.error("Error init Firebase:", e);
+                        state.isMock = true;
+                    }
+                }
+            },
+
+            startPCMode: () => {
+                state.mode = 'pc';
+                // Generar ID de 4 dígitos
+                state.sessionId = Math.floor(1000 + Math.random() * 9000).toString();
+                
+                document.getElementById('view-selection').classList.add('hidden');
+                document.getElementById('view-pc').classList.remove('hidden');
+                document.getElementById('session-id-display').innerText = state.sessionId;
+
+                pc.renderTemplate();
+                pc.listenForData();
+            },
+
+            startMobileMode: () => {
+                state.mode = 'mobile';
+                const inputId = prompt("Ingresa el ID de Sesión que ves en la PC:");
+                if (!inputId) return location.reload();
+                
+                state.sessionId = inputId;
+                
+                document.getElementById('view-selection').classList.add('hidden');
+                document.getElementById('view-mobile').classList.remove('hidden');
+                document.getElementById('mobile-session-display').innerText = `ID: ${state.sessionId}`;
+
+                mobile.initSpeech();
+            }
+        };
+
+        // ==========================================
+        // 3. LOGICA PANTALLA (PC)
+        // ==========================================
+
+        const pc = {
+            renderTemplate: () => {
+                const container = document.getElementById('report-container');
+                const nav = document.getElementById('sections-nav');
+                const opts = document.getElementById('options-container');
+
+                container.innerHTML = '';
+                nav.innerHTML = '';
+                opts.innerHTML = '';
+
+                // Renderizar Opciones (Checkboxes)
+                TEMPLATE_ABDOMEN.options.forEach(opt => {
+                    opts.innerHTML += `
+                        <label class="flex items-center space-x-2 text-sm text-slate-300 cursor-pointer hover:text-white">
+                            <input type="checkbox" ${opt.active ? 'checked' : ''} class="rounded border-slate-700 bg-slate-800 text-sky-500 focus:ring-sky-500">
+                            <span>${opt.label}</span>
+                        </label>
+                    `;
+                });
+
+                // Renderizar Secciones
+                TEMPLATE_ABDOMEN.sections.forEach((sec, index) => {
+                    // Navegación Lateral
+                    const navItem = document.createElement('div');
+                    navItem.className = `p-2 text-sm rounded cursor-pointer transition-colors ${index === 0 ? 'bg-sky-900/50 text-sky-400 font-bold' : 'text-slate-400 hover:bg-slate-800'}`;
+                    navItem.innerText = sec.title;
+                    navItem.id = `nav-${index}`;
+                    navItem.onclick = () => pc.setActiveSection(index);
+                    nav.appendChild(navItem);
+
+                    // Cuerpo del Informe
+                    const secDiv = document.createElement('div');
+                    secDiv.id = `sec-body-${index}`;
+                    secDiv.className = `p-4 rounded-lg border border-slate-800 transition-all ${index === 0 ? 'section-active ring-1 ring-sky-500/50' : 'bg-slate-900/50'}`;
+                    
+                    const title = document.createElement('h4');
+                    title.className = "text-sky-500 font-bold text-sm uppercase mb-2";
+                    title.innerText = sec.title;
+
+                    const content = document.createElement('p');
+                    content.id = `content-${index}`;
+                    // Lógica de visualización: Si current está vacío, muestra default (gris). Si tiene algo, muestra current (blanco).
+                    if (sec.current) {
+                        content.className = "section-edited";
+                        content.innerText = sec.current;
+                    } else {
+                        content.className = "section-default";
+                        content.innerText = sec.default;
+                    }
+
+                    secDiv.appendChild(title);
+                    secDiv.appendChild(content);
+                    container.appendChild(secDiv);
+                });
+            },
+
+            setActiveSection: (index) => {
+                // Quitar estilo activo anterior
+                document.getElementById(`nav-${state.currentSectionIndex}`).className = "p-2 text-sm rounded cursor-pointer text-slate-400 hover:bg-slate-800";
+                document.getElementById(`sec-body-${state.currentSectionIndex}`).classList.remove('section-active', 'ring-1', 'ring-sky-500/50');
+                
+                // Poner nuevo estilo
+                state.currentSectionIndex = index;
+                document.getElementById(`nav-${index}`).className = "p-2 text-sm rounded cursor-pointer bg-sky-900/50 text-sky-400 font-bold";
+                document.getElementById(`sec-body-${index}`).classList.add('section-active', 'ring-1', 'ring-sky-500/50');
+                
+                // Scroll suave al elemento
+                document.getElementById(`sec-body-${index}`).scrollIntoView({ behavior: 'smooth', block: 'center' });
+            },
+
+            updateSectionText: (text, append = true) => {
+                const idx = state.currentSectionIndex;
+                const section = TEMPLATE_ABDOMEN.sections[idx];
+                
+                // Capitalizar primera letra
+                const cleanText = text.charAt(0).toUpperCase() + text.slice(1);
+
+                if (append && section.current.length > 0) {
+                    section.current += " " + cleanText;
+                } else {
+                    section.current = cleanText;
+                }
+
+                // Re-render solo de este bloque
+                const contentEl = document.getElementById(`content-${idx}`);
+                contentEl.className = "section-edited";
+                contentEl.innerText = section.current;
+            },
+
+            handleIncomingAction: (data) => {
+                console.log("Recibido en PC:", data);
+                
+                // 1. Comandos de Navegación
+                if (data.type === 'command') {
+                    if (data.payload === 'next') {
+                        const nextIdx = (state.currentSectionIndex + 1) % TEMPLATE_ABDOMEN.sections.length;
+                        pc.setActiveSection(nextIdx);
+                    }
+                    if (data.payload === 'undo') {
+                        // Borrado simple: resetea la sección actual a default
+                        TEMPLATE_ABDOMEN.sections[state.currentSectionIndex].current = "";
+                        pc.renderTemplate(); // Re-render rápido
+                        pc.setActiveSection(state.currentSectionIndex);
+                    }
+                }
+
+                // 2. Texto Dictado (Reporting by exception logic)
+                if (data.type === 'text') {
+                    const spokenText = data.payload.toLowerCase();
+                    
+                    // Buscar si dijo el nombre de una sección (Salto directo)
+                    const foundSectionIdx = TEMPLATE_ABDOMEN.sections.findIndex(s => spokenText.includes(s.title.toLowerCase()));
+                    
+                    if (foundSectionIdx !== -1) {
+                        pc.setActiveSection(foundSectionIdx);
+                        // Opcional: Eliminar el nombre de la sección del texto a insertar
+                        return; 
+                    }
+
+                    // Insertar texto en sección activa
+                    pc.updateSectionText(data.payload);
+                }
+            },
+
+            listenForData: () => {
+                if (state.isMock) {
+                    // MOCK MODE: Escuchar cambios en localStorage (mismo navegador, diferentes tabs)
+                    window.addEventListener('storage', (e) => {
+                        if (e.key === `radiomic_${state.sessionId}`) {
+                            const data = JSON.parse(e.newValue);
+                            pc.handleIncomingAction(data);
+                        }
+                    });
+                } else {
+                    // FIREBASE REALTIME
+                    const dbRef = firebase.database().ref(`sessions/${state.sessionId}`);
+                    dbRef.on('child_added', (snapshot) => {
+                        pc.handleIncomingAction(snapshot.val());
+                        // Borrar para no re-procesar al recargar (simple queue logic)
+                        snapshot.ref.remove(); 
+                    });
+                }
+            },
+
+            copyReport: () => {
+                let fullText = `INFORME ECOGRÁFICO\nID SESIÓN: ${state.sessionId}\n-------------------------\n\n`;
+                
+                // Agregar Opcionales
+                const opts = TEMPLATE_ABDOMEN.options;
+                if(opts.find(o => o.id === 'opt_tech' && o.active)) fullText += "TÉCNICA: Transductor Convexo Multi-frecuencia.\n\n";
+
+                // Agregar Cuerpo
+                TEMPLATE_ABDOMEN.sections.forEach(sec => {
+                    const textToUse = sec.current || sec.default;
+                    fullText += `${sec.title.toUpperCase()}:\n${textToUse}\n\n`;
+                });
+
+                // Agregar Legal
+                if(opts.find(o => o.id === 'opt_legal' && o.active)) fullText += "Nota: Informe preliminar sujeto a revisión clínica.";
+
+                navigator.clipboard.writeText(fullText).then(() => alert("Informe copiado al portapapeles"));
+            }
+        };
+
+        // ==========================================
+        // 4. LOGICA MICRÓFONO (MÓVIL)
+        // ==========================================
+
+        const mobile = {
+            initSpeech: () => {
+                if (!('webkitSpeechRecognition' in window)) {
+                    alert("Tu navegador no soporta Web Speech API. Usa Chrome o Safari.");
+                    return;
+                }
+
+                const recognition = new webkitSpeechRecognition();
+                recognition.continuous = false; // False para enviar frases cortas rápido
+                recognition.lang = 'es-ES';
+                recognition.interimResults = false;
+
+                recognition.onstart = () => {
+                    state.isRecording = true;
+                    document.getElementById('btn-record').classList.add('recording-pulse', 'border-rose-500', 'text-rose-500');
+                    document.getElementById('mic-status').innerText = "Escuchando...";
+                };
+
+                recognition.onend = () => {
+                    state.isRecording = false;
+                    document.getElementById('btn-record').classList.remove('recording-pulse', 'border-rose-500', 'text-rose-500');
+                    document.getElementById('mic-status').innerText = "Toque para grabar";
+                };
+
+                recognition.onresult = (event) => {
+                    const transcript = event.results[0][0].transcript;
+                    document.getElementById('live-transcript').innerText = `"${transcript}"`;
+                    mobile.sendData({ type: 'text', payload: transcript });
+                };
+
+                // Botón Listener
+                const btn = document.getElementById('btn-record');
+                btn.addEventListener('touchstart', (e) => { e.preventDefault(); recognition.start(); });
+                btn.addEventListener('mousedown', (e) => { recognition.start(); });
+                // En modo simple, click inicia y el silencio detiene auto.
+            },
+
+            sendCommand: (cmd) => {
+                mobile.sendData({ type: 'command', payload: cmd });
+                // Feedback visual
+                const feedback = document.createElement('div');
+                feedback.className = "fixed top-10 left-1/2 transform -translate-x-1/2 bg-sky-500 text-white px-4 py-2 rounded shadow-lg z-50 animate-bounce";
+                feedback.innerText = "Comando enviado";
+                document.body.appendChild(feedback);
+                setTimeout(() => feedback.remove(), 1000);
+            },
+
+            sendData: (data) => {
+                const timestamp = Date.now();
+                if (state.isMock) {
+                    // MOCK MODE: Escribir en localStorage para que la otra tab lo lea
+                    localStorage.setItem(`radiomic_${state.sessionId}`, JSON.stringify({ ...data, ts: timestamp }));
+                } else {
+                    // FIREBASE
+                    firebase.database().ref(`sessions/${state.sessionId}`).push({ ...data, ts: timestamp });
+                }
+            }
+        };
+
+        // Iniciar
+        app.init();
+
+    </script>
+</body>
+</html>
