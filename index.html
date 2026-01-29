@@ -1,0 +1,381 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>RadioMic Remote | Suite Radiológica</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    
+    <!-- FIREBASE SDK -->
+    <script src="https://www.gstatic.com/firebasejs/9.6.1/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.6.1/firebase-database-compat.js"></script>
+
+    <style>
+        body { background-color: #0f172a; color: #e2e8f0; font-family: 'Segoe UI', system-ui, sans-serif; touch-action: manipulation; }
+        .recording-pulse { animation: pulse-red 2s infinite; background-color: #ef4444 !important; border-color: #f87171 !important; }
+        @keyframes pulse-red {
+            0% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.7); }
+            70% { box-shadow: 0 0 0 20px rgba(239, 68, 68, 0); }
+            100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); }
+        }
+        .section-active { border-left: 4px solid #38bdf8; background-color: #1e293b; }
+        .section-edited { color: #f8fafc; font-style: normal; font-weight: 500; }
+        .no-select { -webkit-user-select: none; user-select: none; }
+        /* Modal Overlay */
+        .modal-bg { background-color: rgba(0,0,0,0.8); backdrop-filter: blur(4px); }
+    </style>
+</head>
+<body class="h-screen w-screen overflow-hidden flex flex-col">
+
+    <!-- PANTALLA DE INICIO (SELECCIÓN) -->
+    <div id="view-selection" class="flex-1 flex flex-col items-center justify-center p-4 relative">
+        <!-- Botón Configuración -->
+        <button onclick="config.open()" class="absolute top-4 right-4 text-slate-500 hover:text-sky-400 transition-colors p-2">
+            <i class="fa-solid fa-gear text-2xl"></i>
+        </button>
+
+        <h1 class="text-3xl md:text-4xl font-bold text-sky-400 tracking-tight text-center mb-8">
+            <i class="fa-solid fa-radiation mb-2"></i> RadioMic
+        </h1>
+        
+        <div class="grid grid-cols-1 gap-6 w-full max-w-md">
+            <button onclick="app.startPCMode()" class="p-6 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-xl shadow-lg flex items-center gap-4 transition-all hover:scale-[1.02]">
+                <div class="bg-sky-500/10 p-3 rounded-full"><i class="fa-solid fa-desktop text-3xl text-sky-500"></i></div>
+                <div class="text-left">
+                    <h2 class="text-xl font-bold text-white">Modo PANTALLA</h2>
+                    <p class="text-xs text-slate-400">PC del Hospital / Visualizador</p>
+                </div>
+            </button>
+
+            <button onclick="app.startMobileMode()" class="p-6 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-xl shadow-lg flex items-center gap-4 transition-all hover:scale-[1.02]">
+                <div class="bg-rose-500/10 p-3 rounded-full"><i class="fa-solid fa-microphone-lines text-3xl text-rose-500"></i></div>
+                <div class="text-left">
+                    <h2 class="text-xl font-bold text-white">Modo MICRÓFONO</h2>
+                    <p class="text-xs text-slate-400">Smartphone / Control Remoto</p>
+                </div>
+            </button>
+        </div>
+
+        <div id="connection-status" class="mt-8 text-xs px-3 py-1 rounded-full bg-slate-800 text-slate-500 border border-slate-700">
+            <i class="fa-solid fa-circle text-gray-500 mr-2"></i> Esperando configuración...
+        </div>
+    </div>
+
+    <!-- MODAL DE CONFIGURACIÓN -->
+    <div id="modal-config" class="fixed inset-0 modal-bg z-50 hidden flex items-center justify-center p-4">
+        <div class="bg-slate-900 border border-slate-700 rounded-xl w-full max-w-lg shadow-2xl overflow-hidden">
+            <div class="p-4 border-b border-slate-800 flex justify-between items-center bg-slate-800">
+                <h3 class="font-bold text-white"><i class="fa-solid fa-database mr-2"></i>Conexión Nube</h3>
+                <button onclick="config.close()" class="text-slate-400 hover:text-white"><i class="fa-solid fa-xmark text-xl"></i></button>
+            </div>
+            <div class="p-6 space-y-4">
+                <p class="text-sm text-slate-400">Pega aquí el objeto <code>config</code> de tu consola de Firebase para sincronizar dispositivos.</p>
+                <textarea id="config-input" rows="6" class="w-full bg-slate-950 border border-slate-700 rounded p-3 text-xs font-mono text-green-400 focus:outline-none focus:border-sky-500" placeholder='{ "apiKey": "AIzaSy...", "authDomain": "...", "databaseURL": "..." }'></textarea>
+                <div class="flex justify-end gap-3">
+                    <button onclick="config.save()" class="px-4 py-2 bg-sky-600 hover:bg-sky-500 text-white rounded font-bold text-sm">Guardar y Conectar</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- VISTA PANTALLA (PC) -->
+    <div id="view-pc" class="hidden h-full flex flex-col">
+        <header class="h-14 bg-slate-900 border-b border-slate-800 flex items-center justify-between px-4">
+            <div class="flex items-center gap-2">
+                <span class="font-bold text-sky-500 hidden md:block">RadioMic</span>
+                <div class="px-3 py-1 bg-slate-800 rounded border border-slate-700 flex items-center gap-2" title="Comparte este ID con tu celular">
+                    <span class="w-2 h-2 rounded-full bg-green-500 animate-pulse"></span>
+                    <span class="text-xs text-slate-300 uppercase tracking-wider">Sesión:</span>
+                    <b id="session-id-display" class="text-white text-lg font-mono tracking-widest">----</b>
+                </div>
+            </div>
+            <div class="flex gap-2">
+                <button onclick="window.location.reload()" class="p-2 text-slate-400 hover:text-white" title="Salir"><i class="fa-solid fa-power-off"></i></button>
+                <button onclick="pc.copyReport()" class="px-4 py-1 bg-sky-600 text-white rounded text-sm hover:bg-sky-500 shadow-lg shadow-sky-500/20 font-medium">
+                    <i class="fa-solid fa-copy mr-1"></i> Copiar
+                </button>
+            </div>
+        </header>
+
+        <div class="flex-1 flex overflow-hidden">
+            <aside class="w-1/3 md:w-64 bg-slate-900 border-r border-slate-800 overflow-y-auto p-2 space-y-1" id="sections-nav"></aside>
+            <main class="flex-1 overflow-y-auto p-4 md:p-8 bg-slate-950 scroll-smooth" id="report-container"></main>
+        </div>
+    </div>
+
+    <!-- VISTA MICRÓFONO (MÓVIL) -->
+    <div id="view-mobile" class="hidden h-full flex flex-col bg-black no-select">
+        <header class="p-4 flex justify-between items-center border-b border-slate-800 bg-slate-900">
+            <div class="flex items-center gap-2">
+                <span class="w-2 h-2 rounded-full bg-green-500 animate-pulse"></span>
+                <span class="text-slate-300 text-xs font-mono" id="mobile-session-display">ID: ----</span>
+            </div>
+            <button onclick="window.location.reload()" class="text-slate-500"><i class="fa-solid fa-xmark"></i></button>
+        </header>
+
+        <div class="flex-1 flex flex-col items-center justify-center p-6 space-y-8">
+            <div id="live-transcript" class="text-xl text-white text-center font-medium opacity-90 min-h-[4rem] leading-relaxed">
+                Presiona el micrófono...
+            </div>
+            
+            <button id="btn-record" class="w-48 h-48 rounded-full bg-slate-800 border-4 border-slate-700 text-slate-400 text-6xl shadow-2xl transition-all flex items-center justify-center focus:outline-none active:scale-95 active:border-rose-500 active:text-rose-500">
+                <i class="fa-solid fa-microphone"></i>
+            </button>
+            
+            <div id="mic-status" class="text-slate-500 text-xs uppercase tracking-widest font-bold">Inactivo</div>
+        </div>
+
+        <div class="grid grid-cols-3 gap-px bg-slate-800 border-t border-slate-800 pb-safe">
+            <button onclick="mobile.sendCommand('next')" class="py-6 bg-slate-900 active:bg-slate-800 text-slate-300 flex flex-col items-center gap-1">
+                <i class="fa-solid fa-arrow-down text-xl"></i> <span class="text-[10px] uppercase font-bold tracking-wider">Siguiente</span>
+            </button>
+            <button onclick="mobile.sendCommand('undo')" class="py-6 bg-slate-900 active:bg-slate-800 text-slate-300 flex flex-col items-center gap-1">
+                <i class="fa-solid fa-rotate-left text-xl"></i> <span class="text-[10px] uppercase font-bold tracking-wider">Deshacer</span>
+            </button>
+            <button onclick="mobile.sendCommand('normal')" class="py-6 bg-slate-900 active:bg-slate-800 text-slate-300 flex flex-col items-center gap-1">
+                <i class="fa-solid fa-check text-xl"></i> <span class="text-[10px] uppercase font-bold tracking-wider">Normal</span>
+            </button>
+        </div>
+    </div>
+
+    <script>
+        // ==========================================
+        // 1. GESTIÓN DE CONFIGURACIÓN (CRUD LocalStorage)
+        // ==========================================
+        const config = {
+            open: () => {
+                document.getElementById('modal-config').classList.remove('hidden');
+                // Cargar config actual si existe
+                const saved = localStorage.getItem('radiomic_firebase_config');
+                if (saved) document.getElementById('config-input').value = saved;
+            },
+            close: () => document.getElementById('modal-config').classList.add('hidden'),
+            save: () => {
+                const val = document.getElementById('config-input').value;
+                try {
+                    // Validar que sea JSON válido o un objeto JS simple
+                    let clean = val.replace(/const firebaseConfig = /, '').replace(/;$/, '');
+                    JSON.parse(clean); // Prueba de parseo
+                    localStorage.setItem('radiomic_firebase_config', clean);
+                    alert("Configuración guardada. La página se recargará.");
+                    location.reload();
+                } catch (e) {
+                    alert("Error: Asegúrate de pegar solo el objeto JSON { ... }");
+                }
+            },
+            load: () => {
+                const saved = localStorage.getItem('radiomic_firebase_config');
+                if (saved) return JSON.parse(saved);
+                return null;
+            }
+        };
+
+        // ==========================================
+        // 2. PLANTILLAS (Neurorradiología)
+        // ==========================================
+        const TEMPLATE_NEURO = {
+            id: "cerebro_01",
+            title: "RM Cerebro",
+            sections: [
+                { id: "parenquima", title: "Parénquima", default: "Intensidad de señal conservada en T1, T2 y FLAIR. Diferenciación sustancia gris-blanca preservada. Sin realces patológicos.", current: "" },
+                { id: "ventriculos", title: "Sistema Ventricular", default: "Sistema ventricular supratentorial, III y IV ventrículo de morfología y calibre conservado.", current: "" },
+                { id: "linea_media", title: "Línea Media", default: "Estructuras de la línea media centradas.", current: "" },
+                { id: "difusion", title: "Difusión (DWI)", default: "No se observan áreas de restricción a la difusión que sugieran isquemia aguda.", current: "" },
+                { id: "fosa", title: "Fosa Posterior", default: "Tronco del encéfalo y hemisferios cerebelosos sin alteraciones morfologicas ni de señal.", current: "" },
+                { id: "orbitas", title: "Órbitas/Senos", default: "Globos oculares y musculatura extrínseca sin particularidades. Senos paranasales aireados.", current: "" },
+                { id: "conclusion", title: "Conclusión", default: "Examen de RM de cerebro sin alteraciones patológicas actuales.", current: "" }
+            ]
+        };
+
+        // ==========================================
+        // 3. CORE DE LA APLICACIÓN
+        // ==========================================
+        const state = { mode: null, sessionId: null, isMock: false, isRecording: false, currentSectionIndex: 0 };
+        let recognition;
+
+        const app = {
+            init: () => {
+                // 1. Cargar Configuración
+                const userConfig = config.load();
+                const statusEl = document.getElementById('connection-status');
+                
+                if (userConfig) {
+                    try {
+                        firebase.initializeApp(userConfig);
+                        statusEl.innerHTML = '<span class="text-green-500"><i class="fa-solid fa-wifi"></i> Conexión Nube Activa</span>';
+                        statusEl.className = "mt-8 text-xs px-3 py-1 rounded-full bg-slate-800 text-green-400 border border-green-900";
+                    } catch(e) {
+                        statusEl.innerHTML = '<span class="text-red-500">Error en Config</span>';
+                        console.error(e);
+                        state.isMock = true;
+                    }
+                } else {
+                    state.isMock = true;
+                    statusEl.innerHTML = '<span class="text-orange-400"><i class="fa-solid fa-triangle-exclamation"></i> Sin Configuración (Modo Local)</span>';
+                }
+            },
+
+            startPCMode: () => {
+                state.mode = 'pc';
+                state.sessionId = Math.floor(1000 + Math.random() * 9000).toString();
+                toggleView('view-pc');
+                document.getElementById('session-id-display').innerText = state.sessionId;
+                pc.renderTemplate();
+                pc.listen();
+            },
+
+            startMobileMode: () => {
+                state.mode = 'mobile';
+                const input = prompt("Ingresa el número de sesión que ves en la PC:");
+                if (!input) return;
+                state.sessionId = input;
+                toggleView('view-mobile');
+                document.getElementById('mobile-session-display').innerText = `ID: ${state.sessionId}`;
+                mobile.initMic();
+            }
+        };
+
+        // Lógica PC (Visualizador)
+        const pc = {
+            renderTemplate: () => {
+                const nav = document.getElementById('sections-nav');
+                const container = document.getElementById('report-container');
+                nav.innerHTML = ''; container.innerHTML = '';
+
+                TEMPLATE_NEURO.sections.forEach((sec, idx) => {
+                    // Botón Lateral
+                    const btn = document.createElement('div');
+                    btn.className = `p-3 mb-1 rounded cursor-pointer text-sm transition-colors ${idx === 0 ? 'bg-sky-900 text-white font-bold border-l-4 border-sky-400' : 'text-slate-400 hover:bg-slate-800'}`;
+                    btn.innerText = sec.title;
+                    btn.id = `nav-${idx}`;
+                    btn.onclick = () => pc.setSection(idx);
+                    nav.appendChild(btn);
+
+                    // Caja de Texto
+                    const box = document.createElement('div');
+                    box.id = `sec-${idx}`;
+                    box.className = `mb-4 p-5 rounded-lg border transition-all duration-300 ${idx === 0 ? 'border-sky-500 bg-slate-900 shadow-lg shadow-sky-900/20' : 'border-slate-800 bg-slate-900/40 opacity-70'}`;
+                    box.innerHTML = `
+                        <h3 class="text-sky-500 text-xs font-bold uppercase mb-2 tracking-wider">${sec.title}</h3>
+                        <p id="txt-${idx}" class="text-base leading-relaxed ${sec.current ? 'section-edited' : 'section-default'}">${sec.current || sec.default}</p>
+                    `;
+                    container.appendChild(box);
+                });
+            },
+            setSection: (idx) => {
+                // Desactivar anterior
+                const prevNav = document.getElementById(`nav-${state.currentSectionIndex}`);
+                const prevBox = document.getElementById(`sec-${state.currentSectionIndex}`);
+                if(prevNav) prevNav.className = "p-3 mb-1 rounded cursor-pointer text-sm text-slate-400 hover:bg-slate-800";
+                if(prevBox) prevBox.className = "mb-4 p-5 rounded-lg border border-slate-800 bg-slate-900/40 opacity-70";
+
+                // Activar nuevo
+                state.currentSectionIndex = idx;
+                const currNav = document.getElementById(`nav-${idx}`);
+                const currBox = document.getElementById(`sec-${idx}`);
+                if(currNav) currNav.className = "p-3 mb-1 rounded cursor-pointer text-sm bg-sky-900 text-white font-bold border-l-4 border-sky-400";
+                if(currBox) {
+                    currBox.className = "mb-4 p-5 rounded-lg border border-sky-500 bg-slate-900 shadow-lg shadow-sky-900/20 scale-[1.01]";
+                    currBox.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                }
+            },
+            listen: () => {
+                // Listener de Firebase
+                if (!state.isMock) {
+                    firebase.database().ref(`s/${state.sessionId}`).on('child_added', (snap) => {
+                        processData(snap.val());
+                        snap.ref.remove(); // Limpiar cola
+                    });
+                } else {
+                    // Listener Local (Mock)
+                    window.addEventListener('storage', (e) => {
+                        if(e.key === `rm_${state.sessionId}`) processData(JSON.parse(e.newValue));
+                    });
+                }
+            },
+            copyReport: () => {
+                const text = TEMPLATE_NEURO.sections.map(s => `${s.title.toUpperCase()}:\n${s.current || s.default}`).join('\n\n');
+                navigator.clipboard.writeText(text).then(() => alert("Informe copiado al portapapeles."));
+            }
+        };
+
+        // Lógica Móvil (Micrófono)
+        const mobile = {
+            initMic: () => {
+                if (!('webkitSpeechRecognition' in window)) return alert("Tu navegador no soporta voz. Usa Chrome en Android o Safari en iOS.");
+                
+                recognition = new webkitSpeechRecognition();
+                recognition.continuous = false; // Frases cortas
+                recognition.lang = 'es-ES';
+                recognition.interimResults = true;
+
+                recognition.onstart = () => {
+                    state.isRecording = true;
+                    document.getElementById('btn-record').classList.add('recording-pulse', 'border-rose-500', 'text-rose-500');
+                    document.getElementById('mic-status').innerText = "ESCUCHANDO...";
+                    document.getElementById('mic-status').classList.add('text-rose-500');
+                };
+                recognition.onend = () => {
+                    state.isRecording = false;
+                    document.getElementById('btn-record').classList.remove('recording-pulse', 'border-rose-500', 'text-rose-500');
+                    document.getElementById('mic-status').innerText = "INACTIVO";
+                    document.getElementById('mic-status').classList.remove('text-rose-500');
+                };
+                recognition.onresult = (e) => {
+                    const txt = e.results[0][0].transcript;
+                    document.getElementById('live-transcript').innerText = txt;
+                    if (e.results[0].isFinal) send({ type: 'text', val: txt });
+                };
+                
+                // Manejo de botón
+                const btn = document.getElementById('btn-record');
+                btn.onclick = () => {
+                    if(state.isRecording) recognition.stop();
+                    else recognition.start();
+                };
+            },
+            sendCommand: (cmd) => send({ type: 'cmd', val: cmd })
+        };
+
+        // Utilidades
+        function send(data) {
+            if(state.isMock) localStorage.setItem(`rm_${state.sessionId}`, JSON.stringify(data));
+            else firebase.database().ref(`s/${state.sessionId}`).push(data);
+        }
+
+        function processData(data) {
+            if (data.type === 'cmd') {
+                if (data.val === 'next') pc.setSection((state.currentSectionIndex + 1) % TEMPLATE_NEURO.sections.length);
+                if (data.val === 'undo') {
+                    // Borrar contenido actual
+                    TEMPLATE_NEURO.sections[state.currentSectionIndex].current = "";
+                    // Actualizar UI visualmente
+                    const idx = state.currentSectionIndex;
+                    document.getElementById(`txt-${idx}`).innerText = TEMPLATE_NEURO.sections[idx].default;
+                    document.getElementById(`txt-${idx}`).className = "text-base leading-relaxed section-default";
+                }
+            } else if (data.type === 'text') {
+                const idx = state.currentSectionIndex;
+                const txt = data.val.charAt(0).toUpperCase() + data.val.slice(1);
+                
+                // Actualizar modelo
+                const currentSec = TEMPLATE_NEURO.sections[idx];
+                currentSec.current += (currentSec.current ? " " : "") + txt;
+                
+                // Actualizar UI
+                const p = document.getElementById(`txt-${idx}`);
+                p.innerText = currentSec.current;
+                p.className = "text-base leading-relaxed section-edited";
+            }
+        }
+
+        function toggleView(id) {
+            ['view-selection', 'view-pc', 'view-mobile'].forEach(v => document.getElementById(v).classList.add('hidden'));
+            document.getElementById(id).classList.remove('hidden');
+        }
+
+        app.init();
+    </script>
+</body>
+</html>
